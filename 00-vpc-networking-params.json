@@ -1,0 +1,34 @@
+[
+    {
+        "ParameterKey": "AZ1",
+        "ParameterValue": "eu-central-1a"
+    },
+    {
+        "ParameterKey": "AZ2",
+        "ParameterValue": "eu-central-1b"
+    },
+    {
+        "ParameterKey": "VPCName",
+        "ParameterValue": "FLOW-WP-VPC"
+    },
+    {
+        "ParameterKey": "VPCCIDR",
+        "ParameterValue": "10.0.0.0/16"
+    },
+    {
+        "ParameterKey": "SubnetPublic1CIDR",
+        "ParameterValue": "10.0.0.0/24"
+    },
+    {
+        "ParameterKey": "SubnetPublic2CIDR",
+        "ParameterValue": "10.0.1.0/24"
+    },
+    {
+        "ParameterKey": "SubnetPrivate1CIDR",
+        "ParameterValue": "10.0.2.0/24"
+    },
+    {
+        "ParameterKey": "SubnetPrivate2CIDR",
+        "ParameterValue": "10.0.3.0/24"
+    }
+]

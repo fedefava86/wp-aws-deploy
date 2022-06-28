@@ -1,0 +1,184 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: "ALB and Fargate"
+
+Metadata:
+  "AWS::CloudFormation::Interface":
+    ParameterGroups:
+      - Label:
+          default: "Global Parameters"
+        Parameters:
+          - VPCStackID
+          - DatabaseStackID
+
+Parameters:
+  VPCStackID:
+    Type: String
+    Description: "VPC-Stack-ID"
+    Default: "FLOW-WP-VPC"
+  DatabaseStackID:
+    Type: String
+    DescriptioN: "Database Stack ID"
+    Default: "FLOW-WP-EFS-DB"
+
+Resources:
+
+  ALBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: ALB Security Group
+      VpcId:
+        Fn::ImportValue: !Sub "${VPCStackID}-VPC"
+      GroupName: Wordpress-Demo-ALB-SG
+      SecurityGroupIngress:
+      - IpProtocol: "tcp"
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+
+  WordPressALB:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: wof-load-balancer
+      SecurityGroups: 
+      - !Ref ALBSecurityGroup
+      Subnets:
+        - Fn::ImportValue: !Sub "${VPCStackID}-SubnetPublic1"
+        - Fn::ImportValue: !Sub "${VPCStackID}-SubnetPublic2"
+
+  WordPressTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: WordPressTargetGroup
+      TargetType: ip
+      Port: 8080
+      Protocol: HTTP
+      HealthCheckPort: 8080
+      VpcId: !Ref VPC
+
+  WordPressALBListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      LoadBalancerArn: !Ref WordPressALB
+      Protocol: "HTTP"
+      Port: 80
+      DefaultActions:
+        - Type: forward
+          ForwardConfig:
+            TargetGroups:
+              - TargetGroupArn: !Ref WordPressTargetGroup
+                Weight: 1
+  ECSCluster:
+    Type: AWS::ECS::Cluster
+
+
+  ECSTaskExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [ecs-tasks.amazonaws.com]
+            Action: ["sts:AssumeRole"]
+      Path: /
+      Policies:
+        - PolicyName: AmazonECSTaskExecutionRolePolicy
+          PolicyDocument:
+            Statement:
+              - Effect: Allow
+                Action:
+                  # Allow the ECS Tasks to Run Task
+                  - "ecs:RunTask"
+                  # Allow the ECS tasks to upload logs to CloudWatch
+                  - "logs:CreateLogGroup"
+                  - "logs:CreateLogStream"
+                  - "logs:PutLogEvents"
+                Resource: "*"
+
+  # CloudWatch Log Group for tasks
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      RetentionInDays: 365
+
+  # The task definition. This is a simple metadata description of what
+  # container to run, and what resource requirements it has.
+  TaskDefinition:
+    Type: AWS::ECS::TaskDefinition
+    Properties:
+      Family: !Ref "wordpress-on-aws"
+      Cpu: "1024"
+      Memory: "3072"
+      NetworkMode: awsvpc
+      RequiresCompatibilities:
+        - FARGATE
+      ExecutionRoleArn: !Ref ECSTaskExecutionRole
+      Volumes:
+        Name: "wordpress"
+        EFSVolumeConfiguration:
+          AuthorizationConfig:
+            AccessPointId:
+              Fn::ImportValue: !Sub "${DatabaseStackID}-EFSAccessPoint"
+            IAM: "Disabled"
+          FilesystemId: 
+            Fn::ImportValue: !Sub "${DatabaseStackID}-EFSFSId"
+          TransitEncryption: "ENABLED"
+      ContainerDefinitions:
+        - Name: "wordpress"
+          Cpu: "1024"
+          Memory: "3072"
+          Image: "bitnami/wordpress"
+          MountPoints: 
+            -
+              SourceVolume: "wordpress"
+              ContainerPath: "/bitnami/wordpress"
+          Environment:
+            - Name: "MARIADB_HOST"
+              Value: Fn::ImportValue: !Sub "${DatabaseStackID}-RDSEndpointAddress"
+            - Name: "WORDPRESS_DATABASE_USER"
+              Value: "admin"
+            - Name: "WORDPRESS_DATABASE_PASSWORD"
+              Value: "supersecretpassword"
+            - Name: "WORDPRESS_DATABASE_NAME"
+              Value: "wordpress"
+            - Name: "PHP_MEMORY_LIMIT"
+              Value: "512M"
+            - Name: "enabled"
+              Value: "false"
+            - Name: "ALLOW_EMPTY_PASSWORD"
+              Value: "yes"
+          PortMappings:
+            - ContainerPort: "8080"
+          LogConfiguration:
+            LogDriver: awslogs
+            Options:
+              awslogs-group: !Ref LogGroup
+              awslogs-region: !Ref AWS::Region
+              awslogs-stream-prefix: !Ref ServiceName
+
+
+  Service:
+    Type: AWS::ECS::Service
+    DependsOn: FakeLoadBalancerListener
+    Properties:
+      ServiceName: !Ref "ServiceName"
+      Cluster: !Ref ECSCluster
+      LaunchType: FARGATE
+      HealthCheckGracePeriodSeconds: 120
+      DeploymentConfiguration:
+        MaximumPercent: 200
+        MinimumHealthyPercent: 75
+      DesiredCount: !Ref "DesiredCount"
+      NetworkConfiguration:
+        AwsvpcConfiguration:
+          AssignPublicIp: ENABLED
+          SecurityGroups:
+            - Fn::ImportValue: !Sub "${EnvStackID}-ContainerSG"
+          Subnets:
+            - Fn::ImportValue: !Sub "${EnvStackID}-SubnetOne"
+            - Fn::ImportValue: !Sub "${EnvStackID}-SubnetTwo"
+      TaskDefinition: !Ref "TaskDefinition"
+      LoadBalancers:
+        - ContainerName: !Ref "ServiceName"
+          ContainerPort: !Ref "ContainerPort"
+          TargetGroupArn: !Ref "TargetGroup"
